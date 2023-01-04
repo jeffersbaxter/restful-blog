@@ -1,3 +1,6 @@
 .idea
 posts.db
-static/vendor
+blog.db
+staticold/vendor
+instance
+__pycache__
