@@ -1,6 +1,6 @@
 import os
 from functools import wraps
-from flask import Flask, render_template, redirect, url_for, flash, abort
+from flask import Flask, render_template, redirect, url_for, flash, abort, request
 from flask_bootstrap import Bootstrap
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy
@@ -8,11 +8,11 @@ from sqlalchemy.orm import relationship
 from flask_login import UserMixin, login_user, LoginManager, login_required, current_user, logout_user
 from flask_ckeditor import CKEditor
 from datetime import date
-from forms import CreatePostForm, RegisterForm, LoginForm
+from forms import CreatePostForm, RegisterForm, LoginForm, CommentForm
 
-PASSWORD_METHOD = 'pbkdf2:sha256'
-SALT_LENGTH = 8
-ADMIN_ID = 1
+PASSWORD_METHOD = os.environ.get('PASSWORD_METHOD')
+SALT_LENGTH = int(os.environ.get('SALT_LENGTH'))
+ADMIN_ID = int(os.environ.get('ADMIN_ID'))
 
 app = Flask(__name__)
 login_manager = LoginManager()
@@ -21,8 +21,6 @@ app.config['SECRET_KEY'] = os.environ.get('FLASK_KEY')
 ckeditor = CKEditor(app)
 Bootstrap(app)
 
-
-##CONNECT TO DB
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('SQLITE_PATH')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
@@ -41,13 +39,29 @@ class BlogPost(db.Model):
     body = db.Column(db.Text, nullable=False)
     author = db.Column(db.String(250), nullable=False)
     img_url = db.Column(db.String(250), nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    author = relationship('User', back_populates='posts')
+    comments = relationship('Comment', back_populates='post')
 
 
 class User(UserMixin, db.Model):
+    __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(100), unique=True)
     password = db.Column(db.String(100))
     name = db.Column(db.String(1000))
+    posts = relationship('BlogPost', back_populates='author')
+    comments = relationship('Comment', back_populates='commenter')
+
+
+class Comment(db.Model):
+    __tablename__ = 'comments'
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.Text, nullable=False)
+    commenter_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    commenter = relationship('User', back_populates='comments')
+    post_id = db.Column(db.Integer, db.ForeignKey('blog_posts.id'))
+    post = relationship('BlogPost', back_populates='comments')
 
 
 def admin_only(f):
@@ -144,14 +158,32 @@ def logout():
     return redirect(url_for('get_all_posts'))
 
 
-@app.route("/post/<int:post_id>")
+@app.route("/post/<int:post_id>", methods=['GET', 'POST'])
 def show_post(post_id):
+    form = CommentForm()
     requested_post = BlogPost.query.get(post_id)
+
+    if request.method and form.validate_on_submit():
+        if not current_user.is_authenticated:
+            flash('You need to login before posting a comment.')
+            return redirect(url_for('login'))
+        print('should only print on submit')
+        new_comment = Comment(
+            text=form.text.data,
+            commenter=current_user,
+            post=requested_post
+        )
+        db.session.add(new_comment)
+        db.session.commit()
+        form = CommentForm()
+        return redirect(url_for('get_all_posts'))
+
     return render_template(
         "post.html",
         post=requested_post,
         logged_in=current_user.is_authenticated,
-        is_admin=is_admin
+        is_admin=is_admin,
+        comment_form=form
     )
 
 
